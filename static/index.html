@@ -1,0 +1,100 @@
+<script src="adapter.js"> </script>
+<input id="cbox" type="checkbox" /> initializer?
+<button id="start" onclick="startFn()">start</button>
+<input id="to" />
+<script>
+    const { start: startFn } = (function () {
+        class RTCPartner {
+            constructor() {
+                const url = document.location.toString();
+                const wsUrl = new URL(url);
+                wsUrl.protocol = "ws";
+                this.socket = new WebSocket(wsUrl);
+
+                this.socket.addEventListener("open", () => {
+                    const self = this;
+                    this.socket.send(JSON.stringify({ op: "IDENTIFY" }));
+                    this.socket.addEventListener("message", function identified({ data }) {
+                        const { op, payload } = JSON.parse(data);
+                        if (op === "IDENTIFY") {
+                            console.log("identify", payload);
+                            self.socket.removeEventListener("message", identified);
+                        }
+                    })
+                });
+            }
+
+            send(data) {
+                this.socket.send(JSON.stringify({
+                    op: "MESSAGE",
+                    payload: {
+                        to: document.getElementById("to").value,
+                        message: data
+                    }
+                }))
+            }
+
+            onReceive(cb) {
+                this.socket.addEventListener("message", ({ data }) => {
+                    const { op, payload } = JSON.parse(data);
+                    if (op === "MESSAGE")
+                        cb(payload);
+                })
+            }
+        }
+
+        const Partner = new RTCPartner();
+
+        async function start() {
+            const configuration = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
+            const checkbox = document.getElementById("cbox");
+
+            if (checkbox.checked) {
+                const peerConnection = new RTCPeerConnection(configuration);
+                peerConnection.createDataChannel('asd');
+
+                peerConnection.addEventListener('icecandidate', event => {
+                    console.log("checked", event);
+                    if (event.candidate) {
+                        Partner.send({ iceCandidate: event.candidate });
+                    }
+                });
+
+                Partner.onReceive(async (data) => {
+                    console.log(data);
+                    if (data.answer) {
+                        const remoteDesc = new RTCSessionDescription(data.answer);
+                        await peerConnection.setRemoteDescription(remoteDesc)
+                    }
+                });
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                Partner.send({ 'offer': offer });
+            } else {
+                const peerConnection = new RTCPeerConnection(configuration);
+                peerConnection.addEventListener('icecandidate', event => {
+                    console.log("unchecked", event);
+                    if (event.candidate) {
+                        Partner.send({ iceCandidate: event.candidate });
+                    }
+                });
+
+                Partner.onReceive(async (data) => {
+                    console.log(data);
+                    if (data.offer) {
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+                        Partner.send({ 'answer': answer });
+                    } else if (data.iceCandidate) {
+                        await peerConnection.addIceCandidate(message.iceCandidate);
+                    }
+                });
+            }
+            return false;
+        }
+
+        return { start };
+    })();
+</script>
