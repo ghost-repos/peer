@@ -40,7 +40,7 @@ wsServer.on("connection", (socket) => {
 
         socket.send(JSON.stringify({
           op: "IDENTIFY",
-          payload: id
+          payload: String(id)
         }));
 
         id++;
@@ -48,9 +48,11 @@ wsServer.on("connection", (socket) => {
       }
       case "MESSAGE": {
         const { from, to, message } = payload;
-        if (clients.get(from) !== socket) return;
 
         console.log(from, to, message);
+
+        if (clients.get(from) !== socket) return;
+
 
         const forwardTo = clients.get(to);
 
