@@ -30,28 +30,40 @@ const wsServer = new Server({
 let id = 1;
 const clients = new Map();
 
-wsServer.on("connection", (socket, message) => {
+wsServer.on("connection", (socket) => {
   socket.on("message", message => {
     const { op, payload } = JSON.parse(String(message));
 
     switch (op) {
-      case "IDENTIFY":
+      case "IDENTIFY": {
         clients.set(String(id), socket);
+
         socket.send(JSON.stringify({
           op: "IDENTIFY",
           payload: id
         }));
+
         id++;
         break;
-      case "MESSAGE":
-        const { to, message } = payload;
-        console.log(to, message);
+      }
+      case "MESSAGE": {
+        const { from, to, message } = payload;
+        if (clients.get(from) !== socket) return;
+
+        console.log(from, to, message);
+
         const forwardTo = clients.get(to);
+
         forwardTo.send(JSON.stringify({
           op: "MESSAGE",
-          payload: message
+          payload: {
+            from: String(from),
+            to: String(to),
+            message,
+          }
         }));
         break;
+      }
     }
   });
 });

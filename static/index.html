@@ -1,34 +1,49 @@
-<script src="adapter.js"> </script>
+<div>your id: <span id="self"></span></div>
 <input id="cbox" type="checkbox" /> initializer?
 <button id="start" onclick="startFn()">start</button>
 <input id="to" />
+<script src="adapter.js"> </script>
 <script>
-    const { start: startFn } = (function () {
+    const { start: startFn } = (function initialize() {
         class RTCPartner {
-            constructor() {
-                const url = document.location.toString();
-                const wsUrl = new URL(url);
+            constructor(idCb) {
+                const wsUrl = new URL(document.location.toString());
                 wsUrl.protocol = "ws";
                 this.socket = new WebSocket(wsUrl);
 
                 this.socket.addEventListener("open", () => {
-                    const self = this;
                     this.socket.send(JSON.stringify({ op: "IDENTIFY" }));
+
+                    const self = this;
                     this.socket.addEventListener("message", function identified({ data }) {
                         const { op, payload } = JSON.parse(data);
                         if (op === "IDENTIFY") {
-                            console.log("identify", payload);
+                            if (idCb) {
+                                idCb(payload);
+                                self.ownId = payload;
+                            }
                             self.socket.removeEventListener("message", identified);
                         }
-                    })
+                    });
                 });
             }
 
+            setPartner(partnerId) {
+                if (this.partnerId === undefined)
+                    this.partnerId = partnerId;
+            }
+
             send(data) {
+                if (this.ownId === undefined)
+                    throw new Error("No connection to server available");
+                if (this.partnerId === undefined)
+                    throw new Error("No partner to send data to");
+
                 this.socket.send(JSON.stringify({
                     op: "MESSAGE",
                     payload: {
-                        to: document.getElementById("to").value,
+                        from: this.ownId,
+                        to: this.partnerId,
                         message: data
                     }
                 }))
@@ -37,57 +52,57 @@
             onReceive(cb) {
                 this.socket.addEventListener("message", ({ data }) => {
                     const { op, payload } = JSON.parse(data);
+                    console.log(payload)
                     if (op === "MESSAGE")
                         cb(payload);
-                })
+                });
             }
         }
 
-        const Partner = new RTCPartner();
+        const Partner = new RTCPartner((id) => document.getElementById("self").innerText = id);
+        const configuration = { "iceServers": [{ "urls": "stun:stun.l.google.com:19302" }] }
+        const peerConnection = new RTCPeerConnection(configuration);
+        peerConnection.createDataChannel("asd");
+
+        peerConnection.addEventListener("connectionstatechange", event => {
+            if (peerConnection.connectionState === "connected")
+                console.log("connected!");
+        });
+
+        peerConnection.addEventListener("icecandidate", event => {
+            if (event.candidate)
+                Partner.send({ iceCandidate: event.candidate });
+        });
 
         async function start() {
-            const configuration = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
             const checkbox = document.getElementById("cbox");
 
             if (checkbox.checked) {
-                const peerConnection = new RTCPeerConnection(configuration);
-                peerConnection.createDataChannel('asd');
+                console.log("checked start");
+                Partner.setPartner(document.getElementById("to").value);
 
-                peerConnection.addEventListener('icecandidate', event => {
-                    console.log("checked", event);
-                    if (event.candidate) {
-                        Partner.send({ iceCandidate: event.candidate });
-                    }
-                });
-
-                Partner.onReceive(async (data) => {
-                    console.log(data);
-                    if (data.answer) {
-                        const remoteDesc = new RTCSessionDescription(data.answer);
-                        await peerConnection.setRemoteDescription(remoteDesc)
-                    }
+                Partner.onReceive(async ({ message }) => {
+                    if (message.answer)
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+                    else if (message.iceCandidate)
+                        await peerConnection.addIceCandidate(message.iceCandidate);
                 });
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
-                Partner.send({ 'offer': offer });
+                Partner.send({ "offer": offer });
             } else {
-                const peerConnection = new RTCPeerConnection(configuration);
-                peerConnection.addEventListener('icecandidate', event => {
-                    console.log("unchecked", event);
-                    if (event.candidate) {
-                        Partner.send({ iceCandidate: event.candidate });
-                    }
-                });
+                console.log("unchecked start");
+                Partner.onReceive(async ({ from, message }) => {
+                    Partner.setPartner(from);
 
-                Partner.onReceive(async (data) => {
-                    console.log(data);
-                    if (data.offer) {
-                        peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    if (message.offer) {
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+
                         const answer = await peerConnection.createAnswer();
                         await peerConnection.setLocalDescription(answer);
                         Partner.send({ 'answer': answer });
-                    } else if (data.iceCandidate) {
+                    } else if (message.iceCandidate) {
                         await peerConnection.addIceCandidate(message.iceCandidate);
                     }
                 });
