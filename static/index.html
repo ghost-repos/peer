@@ -4,7 +4,7 @@
 <body>
     <div>your id: <span id="self"></span></div>
     <div>partner id: <span id="partner"></span></div>
-    <div>rtc state: <span id="rtc-state">disconnected</span></div>
+    <div>rtc state: <span id="rtc-state"></span></div>
     <div id="setup-panel">
         <button id="connect">connect</button>
         <input id="to" />
@@ -19,278 +19,297 @@
     <script>
 /* global MESSAGE, IDENTIFY, CHUNK_SIZE */
 /* eslint-disable no-shadow, no-use-before-define */
-const {
-    start, socket, connection, setInitializeCallback,
-} = (function initialize() {
-    const wsUrl = new URL(document.location.toString());
-    wsUrl.protocol = "ws";
-    const socket = new WebSocket(wsUrl);
+(function initialize() {
+    document.getElementById("control-panel").style.display = "none";
+    document.getElementById("setup-panel").style.display = "block";
+    document.getElementById("rtc-state").innerText = "disconnected";
+    document.getElementById("partner").innerText = "";
+    document.getElementById("self").innerText = "";
 
-    /** @type {string} */
-    let selfId = null;
-    /** @type {string} */
-    let partnerId = null;
-    /** @type {(arg: RTCDataChannel) => void} */
-    let onInitialized = () => { };
-
-    const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-    const connection = new RTCPeerConnection(configuration);
-    /** @type {RTCDataChannel} */
-    let channel = null;
-
-    socket.addEventListener("open", function identify() {
-        socket.send(JSON.stringify({ op: IDENTIFY }));
-
-        // obtain initial id from server
-        socket.addEventListener("message", function identified({ data }) {
-            const { op, payload } = JSON.parse(data);
-            if (op === IDENTIFY && selfId === null) {
-                selfId = payload;
-                socket.removeEventListener("open", identify);
-                socket.removeEventListener("message", identified);
-
-                // wait for an offer by default
-                socket.addEventListener("message", waitForOffer);
-            }
-        });
-    });
-
-    async function waitForOffer({ data }) {
-        const { payload: { from, message: { offer } } } = JSON.parse(data);
-
-        partnerId = from;
-
-        await connection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await connection.createAnswer();
-        await connection.setLocalDescription(answer);
-
-        socket.send(JSON.stringify({
-            op: MESSAGE,
-            payload: { from: selfId, to: partnerId, message: { answer } },
-        }));
-        socket.removeEventListener("message", waitForOffer);
-
-        // act as receiver if offer is received
-        receiver();
-    }
-
-    // cant act as sender if manually called ie through button click
-    async function start() {
-        // cancel receiver if acting as sender
-        socket.removeEventListener("message", waitForOffer);
-
-        partnerId = document.getElementById("to").value;
-        channel = connection.createDataChannel("arbitrary");
-        const offer = await connection.createOffer();
-        await connection.setLocalDescription(offer);
-
-        // send offer to receiver
-        socket.send(JSON.stringify({ op: MESSAGE, payload: { from: selfId, to: partnerId, message: { offer } } }));
-
-        // wait for answer
-        await new Promise((resolve) => {
-            socket.addEventListener("message", async function waitForAnswer({ data }) {
-                const { payload: { from, message: { answer } } } = JSON.parse(data);
-
-                if (from !== partnerId) {
-                    return;
-                }
-
-                await connection.setRemoteDescription(new RTCSessionDescription(answer));
-                socket.removeEventListener("message", waitForAnswer);
-                resolve();
-            });
-        });
-
-        // wait for ice candidates
-        await new Promise((resolve) => {
-            function sendIceCandidate({ candidate }) {
-                socket.send(JSON.stringify({
-                    op: MESSAGE,
-                    payload: { from: selfId, to: partnerId, message: { candidate } },
-                }));
-            }
-
-            function receiveIceCandidate({ data }) {
-                const { payload: { from, message: { candidate } } } = JSON.parse(data);
-
-                if (from !== partnerId) {
-                    return;
-                }
-
-                connection.addIceCandidate(candidate);
-            }
-
-            connection.addEventListener("icecandidate", sendIceCandidate);
-            socket.addEventListener("message", receiveIceCandidate);
-            connection.addEventListener("connectionstatechange", () => {
-                if (connection.connectionState === "connected") {
-                    connection.removeEventListener("icecandidate", sendIceCandidate);
-                    socket.removeEventListener("message", receiveIceCandidate);
-                    socket.close();
-                    resolve();
-                }
-            });
-        });
-
-        onInitialized(channel);
-    }
-
-    async function receiver() {
-        // wait for ice candidates
-        await new Promise((resolve) => {
-            function sendIceCandidate({ candidate }) {
-                socket.send(JSON.stringify({ op: MESSAGE, payload: { to: partnerId, message: { candidate } } }));
-            }
-
-            function receiveIceCandidate({ data }) {
-                const { payload: { from, message: { candidate } } } = JSON.parse(data);
-
-                if (from !== partnerId) {
-                    return;
-                }
-
-                connection.addIceCandidate(candidate);
-            }
-
-            connection.addEventListener("icecandidate", sendIceCandidate);
-            socket.addEventListener("message", receiveIceCandidate);
-            connection.addEventListener("connectionstatechange", () => {
-                if (connection.connectionState === "connected") {
-                    connection.removeEventListener("icecandidate", sendIceCandidate);
-                    socket.removeEventListener("message", receiveIceCandidate);
-                    socket.close();
-                    resolve();
-                }
-            });
-        });
-
-        // wait for data channel
-        channel = await new Promise((resolve) => {
-            connection.addEventListener("datachannel", function waitForDataChannel({ channel }) {
-                connection.removeEventListener("datachannel", waitForDataChannel);
-                resolve(channel);
-            });
-        });
-
-        onInitialized(channel);
-    }
-
-    function setInitializeCallback(cb) {
-        onInitialized = cb;
-    }
-
-    return {
+    const {
         start, socket, connection, setInitializeCallback,
-    };
-}());
+    } = (() => {
+        const wsUrl = new URL(document.location.toString());
+        wsUrl.protocol = "ws";
+        const socket = new WebSocket(wsUrl);
 
-/* purely for actual app specific logic */
-document.getElementById("connect").addEventListener("click", start);
+        /** @type {string} */
+        let selfId = null;
+        /** @type {string} */
+        let partnerId = null;
+        /** @type {(arg: RTCDataChannel) => void} */
+        let onInitialized = () => { };
 
-/** @type {Map<string, { buffer: Uint8Array[], dataUrl: string }>} */
-const receivedFiles = new Map();
+        const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+        const connection = new RTCPeerConnection(configuration);
+        /** @type {RTCDataChannel} */
+        let channel = null;
 
-socket.addEventListener("message", function identified({ data }) {
-    const { op, payload } = JSON.parse(data);
-    if (op === IDENTIFY) {
-        document.getElementById("self").innerText = payload;
-        socket.removeEventListener("message", identified);
-    }
-});
+        socket.addEventListener("open", function identify() {
+            socket.send(JSON.stringify({ op: IDENTIFY }));
 
-socket.addEventListener("message", function getPartner({ data }) {
-    const { op, payload: { from } } = JSON.parse(data);
-    if (op === MESSAGE && from) {
-        document.getElementById("partner").innerText = from;
-        socket.removeEventListener("message", getPartner);
-    }
-});
+            // obtain initial id from server
+            socket.addEventListener("message", function identified({ data }) {
+                const { op, payload } = JSON.parse(data);
+                if (op === IDENTIFY && selfId === null) {
+                    selfId = payload;
+                    socket.removeEventListener("open", identify);
+                    socket.removeEventListener("message", identified);
 
-connection.addEventListener("connectionstatechange", () => {
-    document.getElementById("rtc-state").innerText = connection.connectionState;
-});
+                    // wait for an offer by default
+                    socket.addEventListener("message", waitForOffer);
+                }
+            });
+        });
 
-// test rendering on interval
-setInterval(() => {
-    document.getElementById("received-files").innerHTML = "";
+        async function waitForOffer({ data }) {
+            const { payload: { from, message: { offer } } } = JSON.parse(data);
 
-    for (const [name, receivedFile] of receivedFiles) {
-        const container = document.createElement("table");
-        container.style.width = "100%";
-        container.style.height = "1rem";
-        const row = document.createElement("tr");
+            partnerId = from;
 
-        const a = document.createElement("a");
-        a.download = name;
-        a.innerText = name;
+            await connection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await connection.createAnswer();
+            await connection.setLocalDescription(answer);
 
-        const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
-        const barLength = Math.max(0.01, 1 / chunks.length);
-        const bars = 1 / barLength;
+            socket.send(JSON.stringify({
+                op: MESSAGE,
+                payload: { from: selfId, to: partnerId, message: { answer } },
+            }));
+            socket.removeEventListener("message", waitForOffer);
 
-        for (let i = 0; i < bars; i++) {
-            const col = document.createElement("td");
-            col.style.width = `${barLength}%`;
-
-            // technically should be a value that takes everything
-            // on the interval into acccount if using less than
-            // chunks.length bars
-            col.style.background = chunks[Math.floor(chunks.length / bars * i)] ? "green" : "red";
-            row.appendChild(col);
+            // act as receiver if offer is received
+            receiver();
         }
 
-        if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
-            receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
-            a.href = receivedFile.dataUrl;
-        }
+        async function start() {
+            // cancel receiver if acting as sender
+            socket.removeEventListener("message", waitForOffer);
 
-        container.appendChild(row);
-        document.getElementById("received-files").appendChild(a);
-        document.getElementById("received-files").appendChild(container);
-    }
-}, 1000);
+            partnerId = document.getElementById("to").value;
+            channel = connection.createDataChannel("arbitrary");
+            const offer = await connection.createOffer();
+            await connection.setLocalDescription(offer);
 
-setInitializeCallback((channel) => {
-    document.getElementById("setup-panel").style.display = "none";
-    document.getElementById("control-panel").style.display = "block";
+            // send offer to receiver
+            socket.send(JSON.stringify({ op: MESSAGE, payload: { from: selfId, to: partnerId, message: { offer } } }));
 
-    // needs to be in a callback or else channel may not be initialized properly
-    channel.addEventListener("message", async ({ data }) => {
-        const {
-            name, chunk, chunks, buffer,
-        } = JSON.parse(data);
+            // wait for answer
+            await new Promise((resolve) => {
+                socket.addEventListener("message", async function waitForAnswer({ data }) {
+                    const { payload: { from, message: { answer } } } = JSON.parse(data);
 
-        if (!receivedFiles.has(name)) {
-            receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
-        }
+                    if (from !== partnerId) {
+                        return;
+                    }
 
-        setTimeout(() => {
-            const fileBuffer = receivedFiles.get(name);
-            fileBuffer.buffer[chunk] = new Uint8Array(buffer);
-        }, 0);
-    });
-
-    document.getElementById("file").addEventListener("change", async ({ target }) => {
-        for (const file of target.files) {
-            const chunks = Math.ceil(file.size / CHUNK_SIZE);
-
-            for (let i = 0; i < chunks; i++) {
-                const reader = new FileReader();
-                const start = i * CHUNK_SIZE;
-
-                reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
-                reader.addEventListener("loadend", () => {
-                    channel.send(JSON.stringify({
-                        name: file.name,
-                        chunk: i,
-                        chunks,
-                        buffer: Array.from(new Uint8Array(reader.result)),
-                    }));
+                    await connection.setRemoteDescription(new RTCSessionDescription(answer));
+                    socket.removeEventListener("message", waitForAnswer);
+                    resolve();
                 });
-            }
+            });
+
+            // wait for ice candidates
+            await new Promise((resolve) => {
+                function sendIceCandidate({ candidate }) {
+                    if (candidate && candidate.candidate) {
+                        socket.send(JSON.stringify({
+                            op: MESSAGE,
+                            payload: { from: selfId, to: partnerId, message: { candidate } },
+                        }));
+                    }
+                }
+
+                function receiveIceCandidate({ data }) {
+                    const { payload: { from, message: { candidate } } } = JSON.parse(data);
+
+                    if (from !== partnerId) {
+                        return;
+                    }
+
+                    connection.addIceCandidate(candidate);
+                }
+
+                connection.addEventListener("icecandidate", sendIceCandidate);
+                socket.addEventListener("message", receiveIceCandidate);
+                connection.addEventListener("connectionstatechange", () => {
+                    if (connection.connectionState === "connected") {
+                        connection.removeEventListener("icecandidate", sendIceCandidate);
+                        socket.removeEventListener("message", receiveIceCandidate);
+                        socket.close();
+                        resolve();
+                    }
+                });
+            });
+
+            onInitialized(channel);
+        }
+
+        async function receiver() {
+            // wait for ice candidates
+            await new Promise((resolve) => {
+                function sendIceCandidate({ candidate }) {
+                    if (candidate && candidate.candidate) {
+                        socket.send(JSON.stringify({
+                            op: MESSAGE,
+                            payload: { to: partnerId, message: { candidate } },
+                        }));
+                    }
+                }
+
+                function receiveIceCandidate({ data }) {
+                    const { payload: { from, message: { candidate } } } = JSON.parse(data);
+
+                    if (from !== partnerId) {
+                        return;
+                    }
+
+                    connection.addIceCandidate(candidate);
+                }
+
+                connection.addEventListener("icecandidate", sendIceCandidate);
+                socket.addEventListener("message", receiveIceCandidate);
+                connection.addEventListener("connectionstatechange", () => {
+                    if (connection.connectionState === "connected") {
+                        connection.removeEventListener("icecandidate", sendIceCandidate);
+                        socket.removeEventListener("message", receiveIceCandidate);
+                        socket.close();
+                        resolve();
+                    }
+                });
+            });
+
+            // wait for data channel
+            channel = await new Promise((resolve) => {
+                connection.addEventListener("datachannel", function waitForDataChannel({ channel }) {
+                    connection.removeEventListener("datachannel", waitForDataChannel);
+                    resolve(channel);
+                });
+            });
+
+            onInitialized(channel);
+        }
+
+        function setInitializeCallback(cb) {
+            onInitialized = cb;
+        }
+
+        return {
+            start, socket, connection, setInitializeCallback,
+        };
+    })();
+
+    /* purely for actual app specific logic */
+    document.getElementById("connect").addEventListener("click", start);
+
+    /** @type {Map<string, { buffer: Uint8Array[], dataUrl: string }>} */
+    const receivedFiles = new Map();
+
+    socket.addEventListener("message", function identified({ data }) {
+        const { op, payload } = JSON.parse(data);
+        if (op === IDENTIFY) {
+            document.getElementById("self").innerText = payload;
+            socket.removeEventListener("message", identified);
         }
     });
-});
+
+    socket.addEventListener("message", function getPartner({ data }) {
+        const { op, payload: { from } } = JSON.parse(data);
+        if (op === MESSAGE && from) {
+            document.getElementById("partner").innerText = from;
+            socket.removeEventListener("message", getPartner);
+        }
+    });
+
+    connection.addEventListener("connectionstatechange", () => {
+        document.getElementById("rtc-state").innerText = connection.connectionState;
+        if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
+            // mainly because I'm too lazy to remove the listeners and stuff...
+            // initialize()
+            window.location.reload();
+        }
+    });
+
+    // test rendering on interval
+    setInterval(() => {
+        document.getElementById("received-files").innerHTML = "";
+
+        for (const [name, receivedFile] of receivedFiles) {
+            const container = document.createElement("table");
+            container.style.width = "100%";
+            container.style.height = "1rem";
+            const row = document.createElement("tr");
+
+            const a = document.createElement("a");
+            a.download = name;
+            a.innerText = name;
+
+            const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
+            const barLength = Math.max(0.01, 1 / chunks.length);
+            const bars = 1 / barLength;
+
+            for (let i = 0; i < bars; i++) {
+                const col = document.createElement("td");
+                col.style.width = `${barLength}%`;
+
+                // technically should be a value that takes everything
+                // on the interval into acccount if using less than
+                // chunks.length bars
+                col.style.background = chunks[Math.floor(chunks.length / bars * i)] ? "green" : "red";
+                row.appendChild(col);
+            }
+
+            if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
+                receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
+                a.href = receivedFile.dataUrl;
+            }
+
+            container.appendChild(row);
+            document.getElementById("received-files").appendChild(a);
+            document.getElementById("received-files").appendChild(container);
+        }
+    }, 1000);
+
+    setInitializeCallback((channel) => {
+        document.getElementById("setup-panel").style.display = "none";
+        document.getElementById("control-panel").style.display = "block";
+
+        // needs to be in a callback or else channel may not be initialized properly
+        channel.addEventListener("message", async ({ data }) => {
+            const {
+                name, chunk, chunks, buffer,
+            } = JSON.parse(data);
+
+            if (!receivedFiles.has(name)) {
+                receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
+            }
+
+            setTimeout(() => {
+                const fileBuffer = receivedFiles.get(name);
+                fileBuffer.buffer[chunk] = new Uint8Array(buffer);
+            }, 0);
+        });
+
+        document.getElementById("file").addEventListener("change", async ({ target }) => {
+            for (const file of target.files) {
+                const chunks = Math.ceil(file.size / CHUNK_SIZE);
+
+                for (let i = 0; i < chunks; i++) {
+                    const reader = new FileReader();
+                    const start = i * CHUNK_SIZE;
+
+                    reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
+                    reader.addEventListener("loadend", () => {
+                        channel.send(JSON.stringify({
+                            name: file.name,
+                            chunk: i,
+                            chunks,
+                            buffer: Array.from(new Uint8Array(reader.result)),
+                        }));
+                    });
+                }
+            }
+        });
+    });
+}());
     </script>
 </body>

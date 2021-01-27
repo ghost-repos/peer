@@ -54,6 +54,7 @@ function generateUniqueId() {
 
 wsServer.on("connection", (socket) => {
     socket.on("message", (data) => {
+        console.log(data);
         const { op, payload } = JSON.parse(String(data));
 
         switch (op) {
