@@ -14,8 +14,10 @@
         <ul id="received-files"></ul>
     </div>
 
-    <script src="adapter.js"> </script>
+    <script src="adapter.js"></script>
+    <script src="constants.js"></script>
     <script>
+/* global MESSAGE, IDENTIFY */
 /* eslint-disable no-shadow, no-use-before-define */
 const {
     start, socket, connection, setInitializeCallback,
@@ -33,12 +35,12 @@ const {
     let channel = null;
 
     socket.addEventListener("open", function identify() {
-        socket.send(JSON.stringify({ op: "IDENTIFY" }));
+        socket.send(JSON.stringify({ op: IDENTIFY }));
 
         // obtain initial id from server
         socket.addEventListener("message", function identified({ data }) {
             const { op, payload } = JSON.parse(data);
-            if (op === "IDENTIFY" && selfId === null) {
+            if (op === IDENTIFY && selfId === null) {
                 selfId = payload;
                 socket.removeEventListener("open", identify);
                 socket.removeEventListener("message", identified);
@@ -58,7 +60,10 @@ const {
         const answer = await connection.createAnswer();
         await connection.setLocalDescription(answer);
 
-        socket.send(JSON.stringify({ op: "MESSAGE", payload: { from: selfId, to: partnerId, message: { answer } } }));
+        socket.send(JSON.stringify({
+            op: MESSAGE,
+            payload: { from: selfId, to: partnerId, message: { answer } },
+        }));
         socket.removeEventListener("message", waitForOffer);
 
         // act as receiver if offer is received
@@ -76,14 +81,16 @@ const {
         await connection.setLocalDescription(offer);
 
         // send offer to receiver
-        socket.send(JSON.stringify({ op: "MESSAGE", payload: { from: selfId, to: partnerId, message: { offer } } }));
+        socket.send(JSON.stringify({ op: MESSAGE, payload: { from: selfId, to: partnerId, message: { offer } } }));
 
         // wait for answer
         await new Promise((resolve) => {
             socket.addEventListener("message", async function waitForAnswer({ data }) {
                 const { payload: { from, message: { answer } } } = JSON.parse(data);
 
-                if (from !== partnerId) return;
+                if (from !== partnerId) {
+                    return;
+                }
 
                 await connection.setRemoteDescription(new RTCSessionDescription(answer));
                 socket.removeEventListener("message", waitForAnswer);
@@ -94,13 +101,18 @@ const {
         // wait for ice candidates
         await new Promise((resolve) => {
             function sendIceCandidate({ candidate }) {
-                socket.send(JSON.stringify({ op: "MESSAGE", payload: { from: selfId, to: partnerId, message: { candidate } } }));
+                socket.send(JSON.stringify({
+                    op: MESSAGE,
+                    payload: { from: selfId, to: partnerId, message: { candidate } },
+                }));
             }
 
             function receiveIceCandidate({ data }) {
                 const { payload: { from, message: { candidate } } } = JSON.parse(data);
 
-                if (from !== partnerId) return;
+                if (from !== partnerId) {
+                    return;
+                }
 
                 connection.addIceCandidate(candidate);
             }
@@ -124,13 +136,15 @@ const {
         // wait for ice candidates
         await new Promise((resolve) => {
             function sendIceCandidate({ candidate }) {
-                socket.send(JSON.stringify({ op: "MESSAGE", payload: { to: partnerId, message: { candidate } } }));
+                socket.send(JSON.stringify({ op: MESSAGE, payload: { to: partnerId, message: { candidate } } }));
             }
 
             function receiveIceCandidate({ data }) {
                 const { payload: { from, message: { candidate } } } = JSON.parse(data);
 
-                if (from !== partnerId) return;
+                if (from !== partnerId) {
+                    return;
+                }
 
                 connection.addIceCandidate(candidate);
             }
@@ -172,7 +186,7 @@ document.getElementById("connect").addEventListener("click", start);
 
 socket.addEventListener("message", function identified({ data }) {
     const { op, payload } = JSON.parse(data);
-    if (op === "IDENTIFY") {
+    if (op === IDENTIFY) {
         document.getElementById("self").innerText = payload;
         socket.removeEventListener("message", identified);
     }
@@ -180,7 +194,7 @@ socket.addEventListener("message", function identified({ data }) {
 
 socket.addEventListener("message", function getPartner({ data }) {
     const { op, payload: { from } } = JSON.parse(data);
-    if (op === "MESSAGE" && from) {
+    if (op === MESSAGE && from) {
         document.getElementById("partner").innerText = from;
         socket.removeEventListener("message", getPartner);
     }

@@ -1,6 +1,7 @@
 import { createServer } from "http";
 import { createReadStream } from "fs";
 import { Server } from "ws";
+import { MESSAGE, IDENTIFY } from "../static/constants";
 
 const server = createServer((req, res) => {
     switch (req.url) {
@@ -11,6 +12,10 @@ const server = createServer((req, res) => {
     case "/adapter.js":
         res.setHeader("content-type", "application/javascript");
         createReadStream("./static/adapter.js").pipe(res);
+        break;
+    case "/constants.js":
+        res.setHeader("content-type", "application/javascript");
+        createReadStream("./static/constants.js").pipe(res);
         break;
     default:
         res.statusCode = 404;
@@ -46,29 +51,28 @@ function generateUniqueId() {
 
 wsServer.on("connection", (socket) => {
     socket.on("message", (data) => {
-        console.log(data);
         const { op, payload } = JSON.parse(String(data));
 
         switch (op) {
-        case "IDENTIFY": {
+        case IDENTIFY: {
             const newId = generateUniqueId();
             clients.set(socket, newId);
             clientIds.set(newId, socket);
 
             socket.send(JSON.stringify({
-                op: "IDENTIFY",
+                op: IDENTIFY,
                 payload: newId,
             }));
             break;
         }
-        case "MESSAGE": {
+        case MESSAGE: {
             const { to, message } = payload;
 
             const from = clients.get(socket);
             const forwardTo = clientIds.get(to);
 
             forwardTo?.send(JSON.stringify({
-                op: "MESSAGE",
+                op: MESSAGE,
                 payload: {
                     from,
                     to,
