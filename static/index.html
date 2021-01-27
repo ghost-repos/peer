@@ -3,16 +3,16 @@
 
 <body>
     <div>your id: <span id="self"></span></div>
+    <div>partner id: <span id="partner"></span></div>
     <div>rtc state: <span id="rtc-state">disconnected</span></div>
     <div id="setup-panel">
         <button id="connect">connect</button>
         <input id="to" />
     </div>
     <div id="control-panel" style="display:none">
-        <textarea id="text" rows="5" cols="33">something</textarea>
         <input multiple id="file" type="file">
+        <ul id="received-files"></ul>
     </div>
-
 
     <script src="adapter.js"> </script>
     <script>
@@ -178,6 +178,14 @@ socket.addEventListener("message", function identified({ data }) {
     }
 });
 
+socket.addEventListener("message", function getPartner({ data }) {
+    const { op, payload: { from } } = JSON.parse(data);
+    if (op === "MESSAGE" && from) {
+        document.getElementById("partner").innerText = from;
+        socket.removeEventListener("message", getPartner);
+    }
+});
+
 connection.addEventListener("connectionstatechange", () => {
     document.getElementById("rtc-state").innerText = connection.connectionState;
 });
@@ -187,27 +195,55 @@ setInitializeCallback((channel) => {
     document.getElementById("control-panel").style.display = "block";
 
     // needs to be in a callback or else channel may not be initialize properly
-    channel.addEventListener("message", ({ data }) => {
-        const a = document.createElement("a");
-        const url = URL.createObjectURL(data);
-        a.href = url;
-        a.download = "";
-        a.click();
-        URL.revokeObjectURL(url);
-    });
+    function receiveFileInfo({ data }) {
+        const fileData = JSON.parse(data);
+        let remainingData = fileData.size;
+        const buffer = [];
 
-    // document.getElementById("text").addEventListener("keypress", ({ key }) => {
-    //     channel.send(key);
-    // });
+        channel.removeEventListener("message", receiveFileInfo);
+        channel.addEventListener("message", async function receiveBuffers({ data }) {
+            const chunk = await data.arrayBuffer();
+            buffer.push(chunk);
+            remainingData -= data.size;
 
+            if (remainingData <= 0) {
+                const li = document.createElement("li");
+                const a = document.createElement("a");
+                const url = URL.createObjectURL(new Blob(buffer));
+                a.href = url;
+                a.download = fileData.name;
+                a.innerText = fileData.name;
+
+                li.appendChild(a);
+                document.getElementById("received-files").appendChild(li);
+                channel.removeEventListener("message", receiveBuffers);
+                channel.addEventListener("message", receiveFileInfo);
+            }
+        });
+    }
+    channel.addEventListener("message", receiveFileInfo);
+
+    const chunkSize = 16000;
     document.getElementById("file").addEventListener("change", async ({ target }) => {
         const reader = new FileReader();
         for (const file of target.files) {
-            reader.readAsArrayBuffer(file);
-            const buffer = await new Promise((resolve) => reader.addEventListener("loadend", () => {
-                resolve(reader.result);
-            }));
-            channel.send(buffer);
+            // can you guarantee these are in order?
+            // the answer is no, so I need to find a way around this
+            channel.send(JSON.stringify({ name: file.name, size: file.size }));
+
+            let start = 0;
+            let end = 0;
+            do {
+                start = end;
+                end = Math.min(start + chunkSize, file.size + 1);
+
+                reader.readAsArrayBuffer(file.slice(start, end));
+                const buffer = await new Promise((resolve) => reader.addEventListener("loadend", () => {
+                    resolve(reader.result);
+                }));
+
+                channel.send(buffer);
+            } while (end < file.size);
         }
     });
 });

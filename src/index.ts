@@ -65,13 +65,13 @@ wsServer.on("connection", (socket) => {
             const { to, message } = payload;
 
             const from = clients.get(socket);
-            const forwardTo = clientIds.get(String(to));
+            const forwardTo = clientIds.get(to);
 
-            forwardTo.send(JSON.stringify({
+            forwardTo?.send(JSON.stringify({
                 op: "MESSAGE",
                 payload: {
-                    from: String(from),
-                    to: String(to),
+                    from,
+                    to,
                     message,
                 },
             }));
