@@ -3,17 +3,33 @@
 
 <body>
     <div style="width:66%;margin:auto">
-        <div>your id: <span id="self"></span></div>
-        <div>partner id: <span id="partner"></span></div>
-        <div>rtc state: <span id="rtc-state"></span></div>
-        <div id="setup-panel">
-            <button id="connect">connect</button>
-            <input id="to" />
+        <div style="margin:1rem">
+            <table>
+                <tr>
+                    <td>Your ID:</td>
+                    <td><input style="background:lightgrey" onClick="this.select()" readonly id="self" /></td>
+                </tr>
+                <tr>
+                    <td>Partner ID:</td>
+                    <td><input id="partner" /></td>
+                </tr>
+                <tr>
+                    <td>WebRTC State:</td>
+                    <td><span id="rtc-state">disconnected</span></td>
+                </tr>
+            </table>
         </div>
-        <div id="control-panel" style="display:none">
-            <input multiple id="file" type="file">
-            <table id="received-files" style="width:100%"></table>
+
+        <div style="margin:1rem">
+            <div id="setup-panel">
+                <button id="connect">connect</button>
+            </div>
+            <div id="control-panel" style="display:none">
+                <input multiple id="file" type="file">
+                <table id="received-files" style="width:100%;margin-top:1rem"></table>
+            </div>
         </div>
+
     </div>
 
     <script src="adapter.js"></script>
@@ -22,12 +38,6 @@
 /* global MESSAGE, IDENTIFY, CHUNK_SIZE */
 /* eslint-disable no-shadow, no-use-before-define */
 (function initialize() {
-    document.getElementById("control-panel").style.display = "none";
-    document.getElementById("setup-panel").style.display = "block";
-    document.getElementById("rtc-state").innerText = "disconnected";
-    document.getElementById("partner").innerText = "";
-    document.getElementById("self").innerText = "";
-
     const {
         start, socket, connection, setInitializeCallback,
     } = (() => {
@@ -87,7 +97,7 @@
             // cancel receiver if acting as sender
             socket.removeEventListener("message", waitForOffer);
 
-            partnerId = document.getElementById("to").value;
+            partnerId = document.getElementById("partner").value;
             channel = connection.createDataChannel("arbitrary");
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
@@ -209,7 +219,7 @@
     socket.addEventListener("message", function identified({ data }) {
         const { op, payload } = JSON.parse(data);
         if (op === IDENTIFY) {
-            document.getElementById("self").innerText = payload;
+            document.getElementById("self").value = payload;
             socket.removeEventListener("message", identified);
         }
     });
@@ -217,7 +227,8 @@
     socket.addEventListener("message", function getPartner({ data }) {
         const { op, payload: { from } } = JSON.parse(data);
         if (op === MESSAGE && from) {
-            document.getElementById("partner").innerText = from;
+            document.getElementById("partner").value = from;
+            document.getElementById("partner").disabled = true;
             socket.removeEventListener("message", getPartner);
         }
     });
@@ -227,7 +238,9 @@
         if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
             // mainly because I'm too lazy to remove the listeners and stuff...
             // initialize()
-            window.location.reload();
+            setTimeout(() => {
+                window.location.reload();
+            }, 5000);
         }
     });
 
