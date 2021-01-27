@@ -10,6 +10,7 @@
     </div>
     <div id="control-panel" style="display:none">
         <textarea id="text" rows="5" cols="33">something</textarea>
+        <input multiple id="file" type="file">
     </div>
 
 
@@ -176,12 +177,28 @@
 
             // needs to be in a callback or else channel may not be initialize properly
             channel.addEventListener("message", ({ data }) => {
-                console.log(data);
+                const a = document.createElement("a");
+                const url = URL.createObjectURL(data);
+                a.href = url;
+                a.download = "";
+                a.click();
+                URL.revokeObjectURL(url);
             });
 
-            document.getElementById("text").addEventListener("keypress", ({ key }) => {
-                channel.send(key);
-            });
+            // document.getElementById("text").addEventListener("keypress", ({ key }) => {
+            //     channel.send(key);
+            // });
+
+            document.getElementById("file").addEventListener("change", async ({ target }) => {
+                const reader = new FileReader();
+                for (const file of target.files) {
+                    reader.readAsArrayBuffer(file);
+                    const buffer = await new Promise(resolve => reader.addEventListener("loadend", () => {
+                        resolve(reader.result);
+                    }));
+                    channel.send(buffer);
+                }
+            })
         });
     </script>
 </body>
