@@ -28,7 +28,11 @@
                 </tr>
                 <tr>
                     <td>WebRTC State:</td>
-                    <td><span id="rtc-state">disconnected</span></td>
+                    <td id="rtc-state">disconnected</td>
+                </tr>
+                <tr>
+                    <td>Last Error:</td>
+                    <td id="last-error">none</td>
                 </tr>
             </table>
         </div>
@@ -48,11 +52,11 @@
     <script src="adapter.js"></script>
     <script src="constants.js"></script>
     <script>
-/* global MESSAGE, IDENTIFY, CHUNK_SIZE */
+/* global MESSAGE, IDENTIFY, CHUNK_SIZE, ERROR */
 /* eslint-disable no-shadow, no-use-before-define */
 (function initialize() {
     const {
-        start, socket, connection, setInitializeCallback,
+        start, socket, setInitializeCallback,
     } = (() => {
         const wsUrl = new URL(document.location.toString());
         wsUrl.protocol = "ws";
@@ -66,7 +70,8 @@
         let onInitialized = () => { };
 
         const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-        const connection = new RTCPeerConnection(configuration);
+        /** @type {RTCPeerConnection} */
+        let connection = null;
         /** @type {RTCDataChannel} */
         let channel = null;
 
@@ -92,6 +97,7 @@
 
             partnerId = from;
 
+            connection = new RTCPeerConnection(configuration);
             await connection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
@@ -110,8 +116,10 @@
             // cancel receiver if acting as sender
             socket.removeEventListener("message", waitForOffer);
 
+            connection = new RTCPeerConnection(configuration);
             partnerId = document.getElementById("partner").value;
             channel = connection.createDataChannel("arbitrary");
+
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
 
@@ -119,8 +127,8 @@
             socket.send(JSON.stringify({ op: MESSAGE, payload: { from: selfId, to: partnerId, message: { offer } } }));
 
             // wait for answer
-            await new Promise((resolve) => {
-                socket.addEventListener("message", async function waitForAnswer({ data }) {
+            await new Promise((resolve, reject) => {
+                async function waitForAnswer({ data }) {
                     const { payload: { from, message: { answer } } } = JSON.parse(data);
 
                     if (from !== partnerId) {
@@ -128,13 +136,28 @@
                     }
 
                     await connection.setRemoteDescription(new RTCSessionDescription(answer));
+                    socket.removeEventListener("message", waitForError);
                     socket.removeEventListener("message", waitForAnswer);
                     resolve();
-                });
+                }
+
+                function waitForError({ data }) {
+                    const { op, payload: { from, message } } = JSON.parse(data);
+                    if (op === ERROR && from === undefined) {
+                        socket.removeEventListener("message", waitForError);
+                        socket.removeEventListener("message", waitForAnswer);
+                        reject(message);
+                    }
+                }
+
+                socket.addEventListener("message", waitForAnswer);
+                socket.addEventListener("message", waitForError);
             });
 
+            onInitialized(channel, connection);
+
             // wait for ice candidates
-            await new Promise((resolve) => {
+            await new Promise((resolve, reject) => {
                 function sendIceCandidate({ candidate }) {
                     if (candidate && candidate.candidate) {
                         socket.send(JSON.stringify({
@@ -154,19 +177,26 @@
                     connection.addIceCandidate(candidate);
                 }
 
+                function receiveIceCandidateError({ errorText }) {
+                    connection.removeEventListener("icecandidate", sendIceCandidate);
+                    connection.removeEventListener("icecandidateerror", receiveIceCandidateError);
+                    socket.removeEventListener("message", receiveIceCandidate);
+                    reject(errorText);
+                }
+
+                connection.addEventListener("icecandidateerror", receiveIceCandidateError);
                 connection.addEventListener("icecandidate", sendIceCandidate);
                 socket.addEventListener("message", receiveIceCandidate);
                 connection.addEventListener("connectionstatechange", () => {
                     if (connection.connectionState === "connected") {
                         connection.removeEventListener("icecandidate", sendIceCandidate);
+                        connection.removeEventListener("icecandidateerror", receiveIceCandidateError);
                         socket.removeEventListener("message", receiveIceCandidate);
                         socket.close();
                         resolve();
                     }
                 });
             });
-
-            onInitialized(channel);
         }
 
         async function receiver() {
@@ -211,7 +241,7 @@
                 });
             });
 
-            onInitialized(channel);
+            onInitialized(channel, connection);
         }
 
         function setInitializeCallback(cb) {
@@ -219,12 +249,26 @@
         }
 
         return {
-            start, socket, connection, setInitializeCallback,
+            start, socket, setInitializeCallback,
         };
     })();
 
-    /* purely for actual app specific logic */
-    document.getElementById("connect").addEventListener("click", start);
+    /* * * * * * * * * * * * * * * * *
+     * everything above is to setup  *
+     * the webrtc connection         *
+       *                           *
+       *                           *
+     * everything below is only for  *
+     * the file sharing app logic    *
+     * * * * * * * * * * * * * * * * */
+
+    document.getElementById("connect").addEventListener("click", () => {
+        document.getElementById("connect").disabled = true;
+        start()
+            .catch(() => {
+                document.getElementById("connect").disabled = false;
+            });
+    });
 
     /** @type {Map<string, { buffer: Uint8Array[], dataUrl: string }>} */
     const receivedFiles = new Map();
@@ -239,21 +283,17 @@
 
     socket.addEventListener("message", function getPartner({ data }) {
         const { op, payload: { from } } = JSON.parse(data);
-        if (op === MESSAGE && from) {
+        if (op === MESSAGE && from !== undefined) {
             document.getElementById("partner").value = from;
             document.getElementById("partner").disabled = true;
             socket.removeEventListener("message", getPartner);
         }
     });
 
-    connection.addEventListener("connectionstatechange", () => {
-        document.getElementById("rtc-state").innerText = connection.connectionState;
-        if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-            // mainly because I'm too lazy to remove the listeners and stuff...
-            // initialize()
-            setTimeout(() => {
-                window.location.reload();
-            }, 5000);
+    socket.addEventListener("message", ({ data }) => {
+        const { op, payload: { from, message } } = JSON.parse(data);
+        if (op === ERROR && from === undefined) {
+            document.getElementById("last-error").innerText = message;
         }
     });
 
@@ -322,12 +362,27 @@
         }
     }, 100);
 
-    setInitializeCallback((channel) => {
+    setInitializeCallback((channel, connection) => {
+        connection.addEventListener("icecandidateerror", ({ errorText }) => {
+            document.getElementById("last-error").innerText = errorText;
+        });
+
+        connection.addEventListener("connectionstatechange", () => {
+            document.getElementById("rtc-state").innerText = connection.connectionState;
+            if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
+            // mainly because I'm too lazy to remove the listeners and stuff...
+                document.getElementById("rtc-state").innerText += " (refreshing page in 10 seconds)";
+                setTimeout(() => {
+                    window.location.reload();
+                }, 10000);
+            }
+        });
+
         document.getElementById("setup-panel").style.display = "none";
         document.getElementById("control-panel").style.display = "block";
 
         // needs to be in a callback or else channel may not be initialized properly
-        channel.addEventListener("message", async ({ data }) => {
+        channel.addEventListener("message", ({ data }) => {
             const {
                 name, chunk, chunks, buffer,
             } = JSON.parse(data);
@@ -342,7 +397,7 @@
             }, 0);
         });
 
-        document.getElementById("file").addEventListener("change", async ({ target }) => {
+        document.getElementById("file").addEventListener("change", ({ target }) => {
             for (const file of target.files) {
                 const chunks = Math.ceil(file.size / CHUNK_SIZE);
 

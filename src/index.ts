@@ -1,7 +1,7 @@
 import { createServer } from "http";
 import { createReadStream } from "fs";
 import WebSocket, { Server } from "ws";
-import { MESSAGE, IDENTIFY } from "../static/constants";
+import { MESSAGE, IDENTIFY, ERROR } from "../static/constants";
 
 const server = createServer((req, res) => {
     switch (req.url) {
@@ -75,15 +75,30 @@ wsServer.on("connection", (socket) => {
             const from = clients.get(socket);
             const forwardTo = clientIds.get(to);
 
-            if (forwardTo === socket) {
+            if (!forwardTo) {
+                socket.send(JSON.stringify({
+                    op: ERROR,
+                    payload: {
+                        message: "Invalid ID",
+                    },
+                }));
                 return;
             }
 
-            forwardTo?.send(JSON.stringify({
+            if (forwardTo === socket) {
+                socket.send(JSON.stringify({
+                    op: ERROR,
+                    payload: {
+                        message: "Can't connect to self",
+                    },
+                }));
+                return;
+            }
+
+            forwardTo.send(JSON.stringify({
                 op: MESSAGE,
                 payload: {
                     from,
-                    to,
                     message,
                 },
             }));
