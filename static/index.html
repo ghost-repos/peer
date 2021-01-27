@@ -24,7 +24,7 @@
                 </tr>
                 <tr>
                     <td>Partner ID:</td>
-                    <td><input id="partner" /></td>
+                    <td><input id="partner" value="" autocomplete="off"/></td>
                 </tr>
                 <tr>
                     <td>WebRTC State:</td>
@@ -42,7 +42,7 @@
                 <button id="connect">connect</button>
             </div>
             <div id="control-panel" style="display:none">
-                <input multiple id="file" type="file">
+                <input multiple id="file" type="file" value="" autocomplete="off" />
                 <table id="received-files" style="width:100%;margin-top:1rem"></table>
             </div>
         </div>
@@ -154,8 +154,6 @@
                 socket.addEventListener("message", waitForError);
             });
 
-            onInitialized(channel, connection);
-
             // wait for ice candidates
             await new Promise((resolve, reject) => {
                 function sendIceCandidate({ candidate }) {
@@ -197,6 +195,8 @@
                     }
                 });
             });
+
+            onInitialized(channel, connection);
         }
 
         async function receiver() {
@@ -363,6 +363,10 @@
     }, 100);
 
     setInitializeCallback((channel, connection) => {
+        document.getElementById("rtc-state").innerText = connection.connectionState;
+        document.getElementById("setup-panel").style.display = "none";
+        document.getElementById("control-panel").style.display = "block";
+
         connection.addEventListener("icecandidateerror", ({ errorText }) => {
             document.getElementById("last-error").innerText = errorText;
         });
@@ -370,16 +374,22 @@
         connection.addEventListener("connectionstatechange", () => {
             document.getElementById("rtc-state").innerText = connection.connectionState;
             if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-            // mainly because I'm too lazy to remove the listeners and stuff...
-                document.getElementById("rtc-state").innerText += " (refreshing page in 10 seconds)";
+                // mainly because I'm too lazy to remove the listeners and stuff...
+                document.getElementById("rtc-state").innerText += " (refreshing page in 10)";
+
+                const end = Date.now() + 10e3;
+                setInterval(() => {
+                    document.getElementById("rtc-state").innerText = document.getElementById("rtc-state")
+                        .innerText.replace(
+                            /refreshing page in \d{1,2}/,
+                            `refreshing page in ${Math.ceil((end - Date.now()) / 1000)}`,
+                        );
+                }, 500);
                 setTimeout(() => {
                     window.location.reload();
                 }, 10000);
             }
         });
-
-        document.getElementById("setup-panel").style.display = "none";
-        document.getElementById("control-panel").style.display = "block";
 
         // needs to be in a callback or else channel may not be initialized properly
         channel.addEventListener("message", ({ data }) => {
@@ -407,6 +417,9 @@
 
                     reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
                     reader.addEventListener("loadend", () => {
+                        // so one guess is that this is processed in alphabetical order for some reason
+                        // which means data actually comes in in the order of the file/chunk... well it's
+                        // ok because what I have written doesn't assume this
                         channel.send(JSON.stringify({
                             name: file.name,
                             chunk: i,
