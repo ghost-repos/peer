@@ -17,7 +17,7 @@
     <script src="adapter.js"></script>
     <script src="constants.js"></script>
     <script>
-/* global MESSAGE, IDENTIFY */
+/* global MESSAGE, IDENTIFY, CHUNK_SIZE */
 /* eslint-disable no-shadow, no-use-before-define */
 const {
     start, socket, connection, setInitializeCallback,
@@ -181,8 +181,10 @@ const {
     };
 }());
 
-// purely for ui stuff
+/* purely for actual app specific logic */
 document.getElementById("connect").addEventListener("click", start);
+
+const receivedFiles = new Map();
 
 socket.addEventListener("message", function identified({ data }) {
     const { op, payload } = JSON.parse(data);
@@ -209,55 +211,52 @@ setInitializeCallback((channel) => {
     document.getElementById("control-panel").style.display = "block";
 
     // needs to be in a callback or else channel may not be initialize properly
-    function receiveFileInfo({ data }) {
-        const fileData = JSON.parse(data);
-        let remainingData = fileData.size;
-        const buffer = [];
+    channel.addEventListener("message", async ({ data }) => {
+        const {
+            name, chunk, chunks, buffer,
+        } = JSON.parse(data);
 
-        channel.removeEventListener("message", receiveFileInfo);
-        channel.addEventListener("message", async function receiveBuffers({ data }) {
-            const chunk = await data.arrayBuffer();
-            buffer.push(chunk);
-            remainingData -= data.size;
+        if (!receivedFiles.has(name)) {
+            // receiving a new file
+            receivedFiles.set(name, { buffer: Array.from({ length: chunks }) });
+        }
 
-            if (remainingData <= 0) {
-                const li = document.createElement("li");
-                const a = document.createElement("a");
-                const url = URL.createObjectURL(new Blob(buffer));
-                a.href = url;
-                a.download = fileData.name;
-                a.innerText = fileData.name;
+        const fileBuffer = receivedFiles.get(name);
+        fileBuffer.buffer[chunk] = new Uint8Array(buffer);
 
-                li.appendChild(a);
-                document.getElementById("received-files").appendChild(li);
-                channel.removeEventListener("message", receiveBuffers);
-                channel.addEventListener("message", receiveFileInfo);
-            }
-        });
-    }
-    channel.addEventListener("message", receiveFileInfo);
+        if (fileBuffer.buffer.every((chunk) => chunk !== undefined)) {
+            // finished receiving file
+            const li = document.createElement("li");
+            const a = document.createElement("a");
+            const url = URL.createObjectURL(new Blob(fileBuffer.buffer));
+            a.href = url;
+            a.download = name;
+            a.innerText = name;
 
-    const chunkSize = 16000;
+            li.appendChild(a);
+            document.getElementById("received-files").appendChild(li);
+            receivedFiles.delete(name);
+        }
+    });
+
     document.getElementById("file").addEventListener("change", async ({ target }) => {
-        const reader = new FileReader();
         for (const file of target.files) {
-            // can you guarantee these are in order?
-            // the answer is no, so I need to find a way around this
-            channel.send(JSON.stringify({ name: file.name, size: file.size }));
+            const chunks = Math.ceil(file.size / CHUNK_SIZE);
 
-            let start = 0;
-            let end = 0;
-            do {
-                start = end;
-                end = Math.min(start + chunkSize, file.size + 1);
+            for (let i = 0; i < chunks; i++) {
+                const reader = new FileReader();
+                const start = i * CHUNK_SIZE;
 
-                reader.readAsArrayBuffer(file.slice(start, end));
-                const buffer = await new Promise((resolve) => reader.addEventListener("loadend", () => {
-                    resolve(reader.result);
-                }));
-
-                channel.send(buffer);
-            } while (end < file.size);
+                reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
+                reader.addEventListener("loadend", () => {
+                    channel.send(JSON.stringify({
+                        name: file.name,
+                        chunk: i,
+                        chunks,
+                        buffer: Array.from(new Uint8Array(reader.result)),
+                    }));
+                });
+            }
         }
     });
 });

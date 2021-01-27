@@ -1,6 +1,6 @@
 import { createServer } from "http";
 import { createReadStream } from "fs";
-import { Server } from "ws";
+import WebSocket, { Server } from "ws";
 import { MESSAGE, IDENTIFY } from "../static/constants";
 
 const server = createServer((req, res) => {
@@ -29,8 +29,9 @@ const wsServer = new Server({
     server,
 });
 
-const clients = new WeakMap();
-const clientIds = new Map();
+type Id = String;
+const clients = new WeakMap<WebSocket, Id>();
+const clientIds = new Map<Id, WebSocket>();
 
 function generateUniqueId() {
     function generateId() {
@@ -91,15 +92,19 @@ wsServer.on("connection", (socket) => {
 
     socket.on("close", () => {
         const id = clients.get(socket);
-        clients.delete(socket);
-        clientIds.delete(id);
+        if (id) {
+            clients.delete(socket);
+            clientIds.delete(id);
+        }
         console.log(`${id} socket close`);
     });
 
     socket.on("error", () => {
         const id = clients.get(socket);
-        clients.delete(socket);
-        clientIds.delete(id);
+        if (id) {
+            clients.delete(socket);
+            clientIds.delete(id);
+        }
         console.log(`${id} socket error`);
     });
 });
