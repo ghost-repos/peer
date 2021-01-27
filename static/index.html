@@ -26,12 +26,16 @@ const {
     wsUrl.protocol = "ws";
     const socket = new WebSocket(wsUrl);
 
+    /** @type {string} */
     let selfId = null;
+    /** @type {string} */
     let partnerId = null;
+    /** @type {(arg: RTCDataChannel) => void} */
     let onInitialized = () => { };
 
     const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
     const connection = new RTCPeerConnection(configuration);
+    /** @type {RTCDataChannel} */
     let channel = null;
 
     socket.addEventListener("open", function identify() {
@@ -184,6 +188,7 @@ const {
 /* purely for actual app specific logic */
 document.getElementById("connect").addEventListener("click", start);
 
+/** @type {Map<string, { buffer: Uint8Array[], dataUrl: string }>} */
 const receivedFiles = new Map();
 
 socket.addEventListener("message", function identified({ data }) {
