@@ -2,16 +2,18 @@
 <meta charset="UTF-8">
 
 <body>
-    <div>your id: <span id="self"></span></div>
-    <div>partner id: <span id="partner"></span></div>
-    <div>rtc state: <span id="rtc-state"></span></div>
-    <div id="setup-panel">
-        <button id="connect">connect</button>
-        <input id="to" />
-    </div>
-    <div id="control-panel" style="display:none">
-        <input multiple id="file" type="file">
-        <div id="received-files"></div>
+    <div style="width:66%;margin:auto">
+        <div>your id: <span id="self"></span></div>
+        <div>partner id: <span id="partner"></span></div>
+        <div>rtc state: <span id="rtc-state"></span></div>
+        <div id="setup-panel">
+            <button id="connect">connect</button>
+            <input id="to" />
+        </div>
+        <div id="control-panel" style="display:none">
+            <input multiple id="file" type="file">
+            <table id="received-files" style="width:100%"></table>
+        </div>
     </div>
 
     <script src="adapter.js"></script>
@@ -231,17 +233,38 @@
 
     // test rendering on interval
     setInterval(() => {
-        document.getElementById("received-files").innerHTML = "";
-
         for (const [name, receivedFile] of receivedFiles) {
-            const container = document.createElement("table");
-            container.style.width = "100%";
-            container.style.height = "1rem";
-            const row = document.createElement("tr");
+            // if the row doesnt exist (dl link or progress cells)
+            if (!document.getElementById(`${name}-dl-link`)) {
+                const row = document.createElement("tr");
 
-            const a = document.createElement("a");
-            a.download = name;
-            a.innerText = name;
+                const linkColumn = document.createElement("td");
+                row.appendChild(linkColumn);
+
+                const a = document.createElement("a");
+                a.id = `${name}-dl-link`;
+                a.download = name;
+                a.innerText = name;
+                linkColumn.appendChild(a);
+
+                const progressColumn = document.createElement("td");
+                row.appendChild(progressColumn);
+
+                const progressContainer = document.createElement("table");
+                progressContainer.style.width = "100%";
+                progressContainer.style.height = "1rem";
+                progressColumn.appendChild(progressContainer);
+
+                const progressRow = document.createElement("tr");
+                progressRow.id = `${name}-progress`;
+                progressContainer.appendChild(progressRow);
+
+                document.getElementById("received-files").appendChild(row);
+            }
+
+            const row = document.getElementById(`${name}-progress`);
+            row.innerHTML = "";
+            const link = document.getElementById(`${name}-dl-link`);
 
             const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
             const barLength = Math.max(0.01, 1 / chunks.length);
@@ -258,16 +281,20 @@
                 row.appendChild(col);
             }
 
+            // cheat so the last bar is always red unless dataUrl is filled
+            const col = document.createElement("td");
+            col.style.width = `${barLength}%`;
+            col.style.background = "red";
+
             if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
                 receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
-                a.href = receivedFile.dataUrl;
+                col.style.background = "green";
+                link.href = receivedFile.dataUrl;
             }
 
-            container.appendChild(row);
-            document.getElementById("received-files").appendChild(a);
-            document.getElementById("received-files").appendChild(container);
+            row.appendChild(col);
         }
-    }, 1000);
+    }, 100);
 
     setInitializeCallback((channel) => {
         document.getElementById("setup-panel").style.display = "none";
