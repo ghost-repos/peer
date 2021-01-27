@@ -16,7 +16,7 @@
         "sourceType": "module"
     },
     "plugins": [
-        "html",
+        "eslint-plugin-html",
         "@typescript-eslint"
     ],
     "rules": {
@@ -43,6 +43,6 @@
             "error",
             "all"
         ],
-        "no-mixed-operators": "off",
+        "no-mixed-operators": "off"
     }
 }

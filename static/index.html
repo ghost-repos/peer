@@ -11,7 +11,7 @@
     </div>
     <div id="control-panel" style="display:none">
         <input multiple id="file" type="file">
-        <ul id="received-files"></ul>
+        <div id="received-files"></div>
     </div>
 
     <script src="adapter.js"></script>
@@ -206,49 +206,64 @@ connection.addEventListener("connectionstatechange", () => {
     document.getElementById("rtc-state").innerText = connection.connectionState;
 });
 
+// test rendering on interval
+setInterval(() => {
+    document.getElementById("received-files").innerHTML = "";
+
+    for (const [name, receivedFile] of receivedFiles) {
+        const container = document.createElement("table");
+        container.style.width = "100%";
+        container.style.height = "1rem";
+        const row = document.createElement("tr");
+
+        const a = document.createElement("a");
+        a.download = name;
+        a.innerText = name;
+
+        const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
+        const barLength = Math.max(0.01, 1 / chunks.length);
+        const bars = 1 / barLength;
+
+        for (let i = 0; i < bars; i++) {
+            const col = document.createElement("td");
+            col.style.width = `${barLength}%`;
+
+            // technically should be a value that takes everything
+            // on the interval into acccount if using less than
+            // chunks.length bars
+            col.style.background = chunks[Math.floor(chunks.length / bars * i)] ? "green" : "red";
+            row.appendChild(col);
+        }
+
+        if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
+            receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
+            a.href = receivedFile.dataUrl;
+        }
+
+        container.appendChild(row);
+        document.getElementById("received-files").appendChild(a);
+        document.getElementById("received-files").appendChild(container);
+    }
+}, 1000);
+
 setInitializeCallback((channel) => {
     document.getElementById("setup-panel").style.display = "none";
     document.getElementById("control-panel").style.display = "block";
 
-    // needs to be in a callback or else channel may not be initialize properly
+    // needs to be in a callback or else channel may not be initialized properly
     channel.addEventListener("message", async ({ data }) => {
         const {
             name, chunk, chunks, buffer,
         } = JSON.parse(data);
 
         if (!receivedFiles.has(name)) {
-            // receiving a new file
-            const li = document.createElement("li");
-            const span = document.createElement("span");
-            const a = document.createElement("a");
-
-            a.download = name;
-            a.innerText = name;
-
-            li.appendChild(span);
-            li.appendChild(a);
-            document.getElementById("received-files").appendChild(li);
-
-            receivedFiles.set(name, { buffer: Array.from({ length: chunks }), element: span, link: a });
+            receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
         }
 
-        const fileBuffer = receivedFiles.get(name);
-        fileBuffer.buffer[chunk] = new Uint8Array(buffer);
-
-        // this stuff probably slows down the actual processing by a lot
-        // consider either just doing chunk++ until chunks is hit
-        // (although what about determining missing chunks and stuff)
-        // or maybe a combination of chunk++ until chunks then check empty spaces
-        // maybe a seperate event/interval to update percentages by checking on receivedFiles
-        const receivedChunkCount = fileBuffer.buffer.filter((chunk) => chunk !== undefined).length;
-        fileBuffer.element.innerHTML = ` ${(receivedChunkCount / chunks * 100).toFixed(2)}%`;
-
-        if (receivedChunkCount === chunks) {
-            // finished receiving file
-            const url = URL.createObjectURL(new Blob(fileBuffer.buffer));
-            fileBuffer.link.href = url;
-            receivedFiles.delete(name);
-        }
+        setTimeout(() => {
+            const fileBuffer = receivedFiles.get(name);
+            fileBuffer.buffer[chunk] = new Uint8Array(buffer);
+        }, 0);
     });
 
     document.getElementById("file").addEventListener("change", async ({ target }) => {
