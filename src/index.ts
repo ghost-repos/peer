@@ -28,15 +28,18 @@ const wsServer = new Server({
 });
 
 let id = 1;
-const clients = new Map();
+const clients = new WeakMap();
+const clientIds = new Map();
 
 wsServer.on("connection", (socket) => {
   socket.on("message", message => {
+    console.log(message);
     const { op, payload } = JSON.parse(String(message));
 
     switch (op) {
       case "IDENTIFY": {
-        clients.set(String(id), socket);
+        clients.set(socket, id);
+        clientIds.set(String(id), socket);
 
         socket.send(JSON.stringify({
           op: "IDENTIFY",
@@ -47,14 +50,10 @@ wsServer.on("connection", (socket) => {
         break;
       }
       case "MESSAGE": {
-        const { from, to, message } = payload;
+        const { to, message } = payload;
 
-        console.log(from, to, message);
-
-        if (clients.get(from) !== socket) return;
-
-
-        const forwardTo = clients.get(to);
+        const from = clients.get(socket);
+        const forwardTo = clientIds.get(String(to));
 
         forwardTo.send(JSON.stringify({
           op: "MESSAGE",
@@ -67,5 +66,19 @@ wsServer.on("connection", (socket) => {
         break;
       }
     }
+  });
+
+  socket.on("close", () => {
+    const id = clients.get(socket);
+    clients.delete(socket);
+    clientIds.delete(id);
+    console.log(`${id} socket close`);
+  });
+
+  socket.on("error", () => {
+    const id = clients.get(socket);
+    clients.delete(socket);
+    clientIds.delete(id);
+    console.log(`${id} socket error`);
   });
 });
