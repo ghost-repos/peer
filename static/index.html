@@ -218,23 +218,35 @@ setInitializeCallback((channel) => {
 
         if (!receivedFiles.has(name)) {
             // receiving a new file
-            receivedFiles.set(name, { buffer: Array.from({ length: chunks }) });
+            const li = document.createElement("li");
+            const span = document.createElement("span");
+            const a = document.createElement("a");
+
+            a.download = name;
+            a.innerText = name;
+
+            li.appendChild(span);
+            li.appendChild(a);
+            document.getElementById("received-files").appendChild(li);
+
+            receivedFiles.set(name, { buffer: Array.from({ length: chunks }), element: span, link: a });
         }
 
         const fileBuffer = receivedFiles.get(name);
         fileBuffer.buffer[chunk] = new Uint8Array(buffer);
 
-        if (fileBuffer.buffer.every((chunk) => chunk !== undefined)) {
-            // finished receiving file
-            const li = document.createElement("li");
-            const a = document.createElement("a");
-            const url = URL.createObjectURL(new Blob(fileBuffer.buffer));
-            a.href = url;
-            a.download = name;
-            a.innerText = name;
+        // this stuff probably slows down the actual processing by a lot
+        // consider either just doing chunk++ until chunks is hit
+        // (although what about determining missing chunks and stuff)
+        // or maybe a combination of chunk++ until chunks then check empty spaces
+        // maybe a seperate event/interval to update percentages by checking on receivedFiles
+        const receivedChunkCount = fileBuffer.buffer.filter((chunk) => chunk !== undefined).length;
+        fileBuffer.element.innerHTML = ` ${(receivedChunkCount / chunks * 100).toFixed(2)}%`;
 
-            li.appendChild(a);
-            document.getElementById("received-files").appendChild(li);
+        if (receivedChunkCount === chunks) {
+            // finished receiving file
+            const url = URL.createObjectURL(new Blob(fileBuffer.buffer));
+            fileBuffer.link.href = url;
             receivedFiles.delete(name);
         }
     });
