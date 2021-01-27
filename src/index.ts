@@ -35,17 +35,19 @@ const clientIds = new Map<Id, WebSocket>();
 
 function generateUniqueId() {
     function generateId() {
-        const words = [["Awesome", "Blue", "Crazy", "Darn", "Edgy"],
+        const words = [
+            ["Awesome", "Blue", "Crazy", "Darn", "Edgy"],
             ["Astute", "Buff", "Cool", "Dead", "Excellent"],
-            ["Animal", "Ball", "Castle", "Dear", "Ear"]];
+            ["Animal", "Ball", "Castle", "Dear", "Ear"],
+        ];
         return Array.from({ length: 3 }, () => Math.floor(Math.random() * 5))
             .map((num, i) => words[i][num]).join("");
     }
 
-    let id;
-    do {
+    let id = generateId();
+    while (clientIds.has(id)) {
         id = generateId();
-    } while (clientIds.has(id));
+    }
 
     return id;
 }
