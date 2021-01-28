@@ -4,7 +4,7 @@
 </head>
 
 <body>
-    <div style="width:66%;margin:auto">
+    <div style="width:80%;margin:auto">
         <div style="margin:1rem">
             <p>
                 Usage
@@ -65,7 +65,7 @@
     <script src="adapter.js"></script>
     <script src="constants.js"></script>
     <script>
-/* global MESSAGE, IDENTIFY, CHUNK_SIZE, ERROR */
+/* global MESSAGE, IDENTIFY, CHUNK_SIZE, ERROR, NUM_CHANNELS */
 /* eslint-disable no-shadow, no-use-before-define */
 (function initialize() {
     const {
@@ -85,8 +85,8 @@
         const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
         /** @type {RTCPeerConnection} */
         let connection = null;
-        /** @type {RTCDataChannel} */
-        let channel = null;
+        /** @type {RTCDataChannel[]} */
+        const channels = [];
 
         socket.addEventListener("open", function identify() {
             socket.send(JSON.stringify({ op: IDENTIFY }));
@@ -131,7 +131,11 @@
 
             connection = new RTCPeerConnection(configuration);
             partnerId = document.getElementById("partner").value;
-            channel = connection.createDataChannel("arbitrary");
+            for (let i = 0; i < NUM_CHANNELS; i++) {
+                channels.push(connection.createDataChannel(`arbitrary ${i}`, {
+                    ordered: false,
+                }));
+            }
 
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
@@ -209,7 +213,7 @@
                 });
             });
 
-            onInitialized(channel, connection);
+            onInitialized(channels, connection);
         }
 
         async function receiver() {
@@ -247,14 +251,17 @@
             });
 
             // wait for data channel
-            channel = await new Promise((resolve) => {
+            await new Promise((resolve) => {
                 connection.addEventListener("datachannel", function waitForDataChannel({ channel }) {
-                    connection.removeEventListener("datachannel", waitForDataChannel);
-                    resolve(channel);
+                    channels.push(channel);
+                    if (channels.length === NUM_CHANNELS) {
+                        connection.removeEventListener("datachannel", waitForDataChannel);
+                        resolve();
+                    }
                 });
             });
 
-            onInitialized(channel, connection);
+            onInitialized(channels, connection);
         }
 
         function setInitializeCallback(cb) {
@@ -394,10 +401,10 @@
 
             const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
 
-            // cheat so the last bar is always red unless dataUrl is filled
-            if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
+            if (receivedFile.dataUrl !== null || chunks.every((tf) => tf === true)) {
                 receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
                 link.href = receivedFile.dataUrl;
+                // cheat so the last bar is always red unless dataUrl is filled
                 chunks.push(true);
             } else {
                 chunks.push(false);
@@ -407,7 +414,8 @@
         }
     }, 100);
 
-    setInitializeCallback((channel, connection) => {
+    // needs to be in a callback or else channels and connection may not be initialized properly
+    setInitializeCallback((channels, connection) => {
         document.getElementById("rtc-state").innerText = connection.connectionState;
         document.getElementById("setup-panel").style.display = "none";
         document.getElementById("control-panel").style.display = "block";
@@ -437,64 +445,83 @@
             }
         });
 
-        // needs to be in a callback or else channel may not be initialized properly
-        channel.addEventListener("message", ({ data }) => {
-            const {
-                name, chunk, chunks, buffer,
-            } = JSON.parse(data);
+        for (const channel of channels) {
+            // eslint-disable-next-line no-loop-func
+            channel.addEventListener("message", ({ data }) => {
+                setTimeout(() => {
+                    const {
+                        name, chunk, chunks, buffer,
+                    } = JSON.parse(data);
 
-            if (name === undefined || chunk === undefined || chunks === undefined || buffer === undefined) {
-                return;
-            }
+                    if (name === undefined || chunk === undefined || chunks === undefined || buffer === undefined) {
+                        return;
+                    }
 
-            if (!receivedFiles.has(name)) {
-                receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
-            }
+                    if (!receivedFiles.has(name)) {
+                        receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
+                    }
 
-            const fileBuffer = receivedFiles.get(name);
-            fileBuffer.buffer[chunk] = new Uint8Array(buffer);
-            channel.send(JSON.stringify({
-                name,
-                progress: fileBuffer.buffer.filter((e) => e).length / fileBuffer.buffer.length,
-            }));
-        });
+                    const fileBuffer = receivedFiles.get(name);
 
-        channel.addEventListener("message", ({ data }) => {
-            const {
-                name, progress,
-            } = JSON.parse(data);
+                    fileBuffer.buffer[chunk] = new Uint8Array(buffer);
+                }, 0);
+            });
+        }
 
-            if (name === undefined || progress === undefined) {
-                return;
-            }
-
-            sentFiles.set(name, progress);
-        });
+        let i = 0;
+        function nextChannel() {
+            const channel = channels[i];
+            i = (i + 1) % NUM_CHANNELS;
+            return channel;
+        }
 
         document.getElementById("file").addEventListener("change", ({ target }) => {
             for (const file of target.files) {
                 if (!sentFiles.has(file.name)) {
                     sentFiles.set(file.name, 0);
                 }
+                let sent = 0;
                 const chunks = Math.ceil(file.size / CHUNK_SIZE);
 
-                for (let i = 0; i < chunks; i++) {
-                    const reader = new FileReader();
-                    const start = i * CHUNK_SIZE;
+                (async () => {
+                    for (let i = 0; i < chunks; i++) {
+                        const reader = new FileReader();
+                        const start = i * CHUNK_SIZE;
 
-                    reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
-                    reader.addEventListener("loadend", () => {
-                        // so one guess is that this is processed in alphabetical order for some reason
-                        // which means data actually comes in in the order of the file/chunk... well it's
-                        // ok because what I have written doesn't assume this
-                        channel.send(JSON.stringify({
-                            name: file.name,
-                            chunk: i,
-                            chunks,
-                            buffer: Array.from(new Uint8Array(reader.result)),
-                        }));
-                    });
-                }
+                        reader.readAsArrayBuffer(file.slice(start, Math.min(start + CHUNK_SIZE, file.size)));
+
+                        // eslint-disable-next-line no-loop-func
+                        await new Promise((resolve) => {
+                            reader.addEventListener("loadend", async () => {
+                                const channel = nextChannel();
+                                if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
+                                    channel.send(JSON.stringify({
+                                        name: file.name,
+                                        chunk: i,
+                                        chunks,
+                                        buffer: Array.from(new Uint8Array(reader.result)),
+                                    }));
+                                    sent++;
+                                    sentFiles.set(file.name, sent / chunks);
+                                    resolve();
+                                } else {
+                                    channel.addEventListener("bufferedamountlow", function sendData() {
+                                        channel.send(JSON.stringify({
+                                            name: file.name,
+                                            chunk: i,
+                                            chunks,
+                                            buffer: Array.from(new Uint8Array(reader.result)),
+                                        }));
+                                        sent++;
+                                        sentFiles.set(file.name, sent / chunks);
+                                        channel.removeEventListener("bufferedamountlow", sendData);
+                                        resolve();
+                                    });
+                                }
+                            });
+                        });
+                    }
+                })();
             }
         });
     });
