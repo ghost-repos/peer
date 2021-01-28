@@ -43,6 +43,7 @@
             "error",
             "all"
         ],
-        "no-mixed-operators": "off"
+        "no-mixed-operators": "off",
+        "no-nested-ternary": "off"
     }
 }

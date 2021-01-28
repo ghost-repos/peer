@@ -43,7 +43,20 @@
             </div>
             <div id="control-panel" style="display:none">
                 <input multiple id="file" type="file" value="" autocomplete="off" />
-                <table id="received-files" style="width:100%;margin-top:1rem"></table>
+                <table style="width:100%;margin-top:1rem">
+                    <tr>
+                        <td>Sent Files</td>
+                        <td>Received Files</td>
+                    </tr>
+                    <tr>
+                        <td style="width:50%;vertical-align:baseline">
+                            <table id="sent-files" style="width:100%"></table>
+                        </td>
+                        <td style="width:50%;vertical-align:baseline">
+                            <table id="received-files" style="width:100%"></table>
+                        </td>
+                    </tr>
+                </table>
             </div>
         </div>
 
@@ -272,6 +285,7 @@
 
     /** @type {Map<string, { buffer: Uint8Array[], dataUrl: string }>} */
     const receivedFiles = new Map();
+    const sentFiles = new Map();
 
     socket.addEventListener("message", function identified({ data }) {
         const { op, payload } = JSON.parse(data);
@@ -299,41 +313,11 @@
 
     // test rendering on interval
     setInterval(() => {
-        for (const [name, receivedFile] of receivedFiles) {
-            // if the row doesnt exist (dl link or progress cells)
-            if (!document.getElementById(`${name}-dl-link`)) {
-                const row = document.createElement("tr");
-
-                const linkColumn = document.createElement("td");
-                row.appendChild(linkColumn);
-
-                const a = document.createElement("a");
-                a.id = `${name}-dl-link`;
-                a.download = name;
-                a.innerText = name;
-                linkColumn.appendChild(a);
-
-                const progressColumn = document.createElement("td");
-                row.appendChild(progressColumn);
-
-                const progressContainer = document.createElement("table");
-                progressContainer.style.width = "100%";
-                progressContainer.style.height = "1rem";
-                progressColumn.appendChild(progressContainer);
-
-                const progressRow = document.createElement("tr");
-                progressRow.id = `${name}-progress`;
-                progressContainer.appendChild(progressRow);
-
-                document.getElementById("received-files").appendChild(row);
-            }
-
-            const row = document.getElementById(`${name}-progress`);
+        function drawProgressBar(chunks, row) {
+            // eslint-disable-next-line no-param-reassign
             row.innerHTML = "";
-            const link = document.getElementById(`${name}-dl-link`);
 
-            const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
-            const barLength = Math.max(0.01, 1 / chunks.length);
+            const barLength = Math.max(0.02, 1 / chunks.length);
             const bars = 1 / barLength;
 
             for (let i = 0; i < bars; i++) {
@@ -346,19 +330,80 @@
                 col.style.background = chunks[Math.floor(chunks.length / bars * i)] ? "green" : "red";
                 row.appendChild(col);
             }
+        }
 
-            // cheat so the last bar is always red unless dataUrl is filled
-            const col = document.createElement("td");
-            col.style.width = `${barLength}%`;
-            col.style.background = "red";
+        for (const [name, progress] of sentFiles) {
+            let progressBar = document.getElementById(`${name}-sent-progress`);
 
-            if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
-                receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
-                col.style.background = "green";
-                link.href = receivedFile.dataUrl;
+            if (!progressBar) {
+                const row = document.createElement("tr");
+
+                const nameColumn = document.createElement("td");
+                nameColumn.innerText = name;
+                row.appendChild(nameColumn);
+
+                const progressColumn = document.createElement("td");
+                row.appendChild(progressColumn);
+
+                const progressContainer = document.createElement("table");
+                progressContainer.style.width = "100%";
+                progressContainer.style.height = "1rem";
+                progressColumn.appendChild(progressContainer);
+
+                progressBar = document.createElement("tr");
+                progressBar.id = `${name}-sent-progress`;
+                progressContainer.appendChild(progressBar);
+
+                document.getElementById("sent-files").appendChild(row);
             }
 
-            row.appendChild(col);
+            drawProgressBar(Array.from({ length: 50 }, (_, i) => i < Math.floor(progress * 100)), progressBar);
+        }
+
+        for (const [name, receivedFile] of receivedFiles) {
+            // if the row doesnt exist (dl link or progress cells)
+            let link = document.getElementById(`${name}-dl-link`);
+            let progressBar = document.getElementById(`${name}-progress`);
+
+            if (!link) {
+                const row = document.createElement("tr");
+
+                const linkColumn = document.createElement("td");
+                row.appendChild(linkColumn);
+
+                link = document.createElement("a");
+                link.id = `${name}-dl-link`;
+                link.download = name;
+                link.innerText = name;
+                linkColumn.appendChild(link);
+
+                const progressColumn = document.createElement("td");
+                row.appendChild(progressColumn);
+
+                const progressContainer = document.createElement("table");
+                progressContainer.style.width = "100%";
+                progressContainer.style.height = "1rem";
+                progressColumn.appendChild(progressContainer);
+
+                progressBar = document.createElement("tr");
+                progressBar.id = `${name}-progress`;
+                progressContainer.appendChild(progressBar);
+
+                document.getElementById("received-files").appendChild(row);
+            }
+
+            const chunks = receivedFile.buffer.map((chunk) => chunk !== undefined);
+
+            // cheat so the last bar is always red unless dataUrl is filled
+            if (chunks.every((tf) => tf === true) || receivedFile.dataUrl !== null) {
+                receivedFile.dataUrl ||= URL.createObjectURL(new Blob(receivedFile.buffer));
+                link.href = receivedFile.dataUrl;
+                chunks.push(true);
+            } else {
+                chunks.push(false);
+            }
+
+            drawProgressBar(chunks, progressBar);
         }
     }, 100);
 
@@ -375,19 +420,19 @@
             document.getElementById("rtc-state").innerText = connection.connectionState;
             if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
                 // mainly because I'm too lazy to remove the listeners and stuff...
-                document.getElementById("rtc-state").innerText += " (refreshing page in 10)";
 
-                const end = Date.now() + 10e3;
+                const timeout = 30e3;
+                const end = Date.now() + timeout;
                 setInterval(() => {
                     document.getElementById("rtc-state").innerText = document.getElementById("rtc-state")
                         .innerText.replace(
                             /refreshing page in \d{1,2}/,
-                            `refreshing page in ${Math.ceil((end - Date.now()) / 1000)}`,
+                            `refreshing page in ${Math.ceil((end - Date.now()) / 1e3)}`,
                         );
                 }, 500);
                 setTimeout(() => {
                     window.location.reload();
-                }, 10000);
+                }, timeout);
             }
         });
 
@@ -397,18 +442,39 @@
                 name, chunk, chunks, buffer,
             } = JSON.parse(data);
 
+            if (name === undefined || chunk === undefined || chunks === undefined || buffer === undefined) {
+                return;
+            }
+
             if (!receivedFiles.has(name)) {
                 receivedFiles.set(name, { buffer: Array.from({ length: chunks }), dataUrl: null });
             }
 
-            setTimeout(() => {
-                const fileBuffer = receivedFiles.get(name);
-                fileBuffer.buffer[chunk] = new Uint8Array(buffer);
-            }, 0);
+            const fileBuffer = receivedFiles.get(name);
+            fileBuffer.buffer[chunk] = new Uint8Array(buffer);
+            channel.send(JSON.stringify({
+                name,
+                progress: fileBuffer.buffer.filter((e) => e).length / fileBuffer.buffer.length,
+            }));
+        });
+
+        channel.addEventListener("message", ({ data }) => {
+            const {
+                name, progress,
+            } = JSON.parse(data);
+
+            if (name === undefined || progress === undefined) {
+                return;
+            }
+
+            sentFiles.set(name, progress);
         });
 
         document.getElementById("file").addEventListener("change", ({ target }) => {
             for (const file of target.files) {
+                if (!sentFiles.has(file.name)) {
+                    sentFiles.set(file.name, 0);
+                }
                 const chunks = Math.ceil(file.size / CHUNK_SIZE);
 
                 for (let i = 0; i < chunks; i++) {
