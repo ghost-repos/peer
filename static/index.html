@@ -419,9 +419,9 @@
         connection.addEventListener("connectionstatechange", () => {
             document.getElementById("rtc-state").innerText = connection.connectionState;
             if (connection.connectionState === "failed" || connection.connectionState === "disconnected") {
-                // mainly because I'm too lazy to remove the listeners and stuff...
-
                 const timeout = 30e3;
+                document.getElementById("rtc-state").innerText += ` (refreshing page in ${timeout / 1e3} seconds)`;
+
                 const end = Date.now() + timeout;
                 setInterval(() => {
                     document.getElementById("rtc-state").innerText = document.getElementById("rtc-state")
@@ -431,6 +431,7 @@
                         );
                 }, 500);
                 setTimeout(() => {
+                    // mainly because I'm too lazy to remove the listeners and stuff...
                     window.location.reload();
                 }, timeout);
             }
