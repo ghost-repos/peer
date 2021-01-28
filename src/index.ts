@@ -1,21 +1,25 @@
 import { createServer } from "http";
-import { createReadStream } from "fs";
+import { readFileSync } from "fs";
 import WebSocket, { Server } from "ws";
 import { MESSAGE, IDENTIFY, ERROR } from "../static/constants";
+
+const home = readFileSync("./static/index.html");
+const adapter = readFileSync("./static/adapter.js");
+const constants = readFileSync("./static/constants.js");
 
 const server = createServer((req, res) => {
     switch (req.url) {
     case "/":
         res.setHeader("content-type", "text/html");
-        createReadStream("./static/index.html").pipe(res);
+        res.end(home);
         break;
     case "/adapter.js":
         res.setHeader("content-type", "application/javascript");
-        createReadStream("./static/adapter.js").pipe(res);
+        res.end(adapter);
         break;
     case "/constants.js":
         res.setHeader("content-type", "application/javascript");
-        createReadStream("./static/constants.js").pipe(res);
+        res.end(constants);
         break;
     default:
         res.statusCode = 404;
@@ -29,24 +33,27 @@ const wsServer = new Server({
     server,
 });
 
-type Id = String;
+type Id = string;
 const clients = new WeakMap<WebSocket, Id>();
 const clientIds = new Map<Id, WebSocket>();
 
-function generateUniqueId() {
+const idPool = Array.from({ length: 50 }, (_, i) => String(i));
+for (let i = 0; i < idPool.length; i++) {
+    const temp = idPool[i];
+    const pos = Math.floor(Math.random() * idPool.length - i) + i;
+    idPool[i] = idPool[pos];
+    idPool[pos] = temp;
+}
+
+function generateUniqueId():Id {
     function generateId() {
-        const words = [
-            ["Awesome", "Blue", "Crazy", "Darn", "Edgy"],
-            ["Astute", "Buff", "Cool", "Dead", "Excellent"],
-            ["Animal", "Ball", "Castle", "Dear", "Ear"],
-        ];
-        return Array.from({ length: 3 }, () => Math.floor(Math.random() * 5))
-            .map((num, i) => words[i][num]).join("");
+        return idPool.shift();
     }
 
-    let id = generateId();
-    while (clientIds.has(id)) {
-        id = generateId();
+    const id = generateId();
+
+    if (id === undefined) {
+        throw new Error("Ran out of ids...");
     }
 
     return id;
@@ -113,8 +120,9 @@ wsServer.on("connection", (socket) => {
         if (id) {
             clients.delete(socket);
             clientIds.delete(id);
+            idPool.push(id);
+            console.log(`${id} socket close`);
         }
-        console.log(`${id} socket close`);
     });
 
     socket.on("error", () => {
@@ -122,7 +130,8 @@ wsServer.on("connection", (socket) => {
         if (id) {
             clients.delete(socket);
             clientIds.delete(id);
+            idPool.push(id);
+            console.log(`${id} socket error`);
         }
-        console.log(`${id} socket error`);
     });
 });
