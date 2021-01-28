@@ -357,7 +357,7 @@
                 document.getElementById("sent-files").appendChild(row);
             }
 
-            drawProgressBar(Array.from({ length: 50 }, (_, i) => i < Math.floor(progress * 100)), progressBar);
+            drawProgressBar(Array.from({ length: 50 }, (_, i) => i < Math.floor(progress * 50)), progressBar);
         }
 
         for (const [name, receivedFile] of receivedFiles) {
